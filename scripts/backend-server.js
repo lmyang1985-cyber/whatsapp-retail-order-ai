@@ -1,4 +1,4 @@
-import { appendFileSync, createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { createApi } from "../src/backend/api.js";
@@ -6,16 +6,11 @@ import { createSeedDatabase } from "../src/backend/createSeedDatabase.js";
 
 const port = Number(process.env.PORT ?? 4173);
 const root = process.cwd();
-const log = (line) => appendFileSync(join(root, "server.log"), `${new Date().toISOString()} ${line}\n`);
 const database = createSeedDatabase({
   filePath: process.env.DATA_FILE ?? join(root, "data", "local-db.json"),
 });
 const api = createApi({ database });
 
-process.on("uncaughtException", (error) => {
-  log(`ERROR ${error.stack ?? error.message}`);
-  process.exit(1);
-});
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -24,40 +19,38 @@ const contentTypes = {
   ".svg": "image/svg+xml",
 };
 
-createServer((request, response) => {
+createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+
   if (url.pathname.startsWith("/api/")) {
-    handleApi(request, response, url);
+    const apiResponse = await api.handle({
+      method: request.method ?? "GET",
+      pathname: url.pathname,
+      query: url.searchParams,
+      body: await readJsonBody(request),
+    });
+    response.writeHead(apiResponse.status, { "Content-Type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify(apiResponse.body));
     return;
   }
+
+  serveStatic(url, response);
+}).listen(port, "127.0.0.1", () => {
+  console.log(`WhatsApp Retail Order AI backend running at http://127.0.0.1:${port}`);
+});
+
+function serveStatic(url, response) {
   const requestedPath = normalize(url.pathname === "/" ? "index.html" : url.pathname.slice(1));
   const filePath = join(root, requestedPath);
-
   if (!filePath.startsWith(root) || !existsSync(filePath) || !statSync(filePath).isFile()) {
     response.writeHead(404);
     response.end("Not found");
     return;
   }
-
   response.writeHead(200, {
     "Content-Type": contentTypes[extname(filePath)] ?? "application/octet-stream",
   });
   createReadStream(filePath).pipe(response);
-}).listen(port, "127.0.0.1", () => {
-  const message = `WhatsApp Retail Order AI running at http://127.0.0.1:${port}`;
-  log(message);
-  console.log(message);
-});
-
-async function handleApi(request, response, url) {
-  const apiResponse = await api.handle({
-    method: request.method ?? "GET",
-    pathname: url.pathname,
-    query: url.searchParams,
-    body: await readJsonBody(request),
-  });
-  response.writeHead(apiResponse.status, { "Content-Type": "application/json; charset=utf-8" });
-  response.end(JSON.stringify(apiResponse.body));
 }
 
 async function readJsonBody(request) {
