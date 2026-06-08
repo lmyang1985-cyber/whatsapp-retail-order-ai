@@ -126,3 +126,156 @@ test("json database can persist and reload snapshots", async () => {
   const reloaded = new JsonDatabase({ initialData: memory.snapshot() });
   assert.equal(reloaded.snapshot().businesses[0].name, "Reloadable Supply");
 });
+
+test("customer endpoints list, create, edit, and deactivate customers", async () => {
+  const database = createSeedDatabase();
+  const api = createApi({ database });
+
+  const list = await api.handle({
+    method: "GET",
+    pathname: "/api/customers",
+    query: new URLSearchParams(),
+    body: null,
+  });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.customers.length, 3);
+
+  const create = await api.handle({
+    method: "POST",
+    pathname: "/api/customers",
+    query: new URLSearchParams(),
+    body: {
+      businessName: "Harbour Juice Bar",
+      whatsappPhone: "+60170001111",
+      contactPerson: "Nora",
+      address: "Lot 4, Harbour Walk",
+      area: "Penang",
+      customerType: "cafe",
+      paymentTerms: "weekly",
+    },
+  });
+  assert.equal(create.status, 201);
+  assert.equal(create.body.customer.active, true);
+  assert.equal(create.body.customer.businessName, "Harbour Juice Bar");
+
+  const update = await api.handle({
+    method: "PATCH",
+    pathname: `/api/customers/${create.body.customer.id}`,
+    query: new URLSearchParams(),
+    body: { area: "Georgetown", paymentTerms: "monthly" },
+  });
+  assert.equal(update.status, 200);
+  assert.equal(update.body.customer.area, "Georgetown");
+  assert.equal(update.body.customer.paymentTerms, "monthly");
+
+  const deactivate = await api.handle({
+    method: "DELETE",
+    pathname: `/api/customers/${create.body.customer.id}`,
+    query: new URLSearchParams(),
+    body: null,
+  });
+  assert.equal(deactivate.status, 200);
+  assert.equal(deactivate.body.customer.active, false);
+});
+
+test("product endpoints list, create, edit aliases, and deactivate products", async () => {
+  const database = createSeedDatabase();
+  const api = createApi({ database });
+
+  const list = await api.handle({
+    method: "GET",
+    pathname: "/api/products",
+    query: new URLSearchParams(),
+    body: null,
+  });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.products.length, 3);
+
+  const create = await api.handle({
+    method: "POST",
+    pathname: "/api/products",
+    query: new URLSearchParams(),
+    body: {
+      name: "Coconut Jelly Cup",
+      aliases: ["jelly", "cup"],
+      unit: "box",
+      defaultPrice: 18.5,
+    },
+  });
+  assert.equal(create.status, 201);
+  assert.equal(create.body.product.name, "Coconut Jelly Cup");
+
+  const update = await api.handle({
+    method: "PATCH",
+    pathname: `/api/products/${create.body.product.id}`,
+    query: new URLSearchParams(),
+    body: { aliases: ["jelly cup", "agar"], defaultPrice: 19.25 },
+  });
+  assert.equal(update.status, 200);
+  assert.deepEqual(update.body.product.aliases, ["jelly cup", "agar"]);
+  assert.equal(update.body.product.defaultPrice, 19.25);
+
+  const deactivate = await api.handle({
+    method: "DELETE",
+    pathname: `/api/products/${create.body.product.id}`,
+    query: new URLSearchParams(),
+    body: null,
+  });
+  assert.equal(deactivate.status, 200);
+  assert.equal(deactivate.body.product.active, false);
+});
+
+test("order endpoints create manual order, edit items, cancel, and deliver", async () => {
+  const database = createSeedDatabase();
+  const api = createApi({ database });
+
+  const create = await api.handle({
+    method: "POST",
+    pathname: "/api/orders",
+    query: new URLSearchParams(),
+    body: {
+      customerId: "cust_green_bowl",
+      deliveryDate: "2026-05-26",
+      notes: "Manual afternoon top-up",
+      items: [{ productId: "prod_young", quantity: 20 }],
+    },
+  });
+  assert.equal(create.status, 201);
+  assert.equal(create.body.order.source, "manual");
+  assert.equal(create.body.order.totalAmount, 57);
+
+  const update = await api.handle({
+    method: "PATCH",
+    pathname: `/api/orders/${create.body.order.id}`,
+    query: new URLSearchParams(),
+    body: {
+      deliveryDate: "2026-05-27",
+      orderStatus: "confirmed",
+      notes: "Updated top-up",
+      items: [{ productId: "prod_old", quantity: 30 }],
+    },
+  });
+  assert.equal(update.status, 200);
+  assert.equal(update.body.order.deliveryDate, "2026-05-27");
+  assert.equal(update.body.order.items[0].productId, "prod_old");
+  assert.equal(update.body.order.totalAmount, 72);
+
+  const delivered = await api.handle({
+    method: "POST",
+    pathname: `/api/orders/${create.body.order.id}/delivered`,
+    query: new URLSearchParams(),
+    body: null,
+  });
+  assert.equal(delivered.status, 200);
+  assert.equal(delivered.body.order.orderStatus, "delivered");
+
+  const cancelled = await api.handle({
+    method: "POST",
+    pathname: `/api/orders/${create.body.order.id}/cancel`,
+    query: new URLSearchParams(),
+    body: { reason: "Customer changed plan" },
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.order.orderStatus, "cancelled");
+  assert.match(cancelled.body.order.notes, /Customer changed plan/);
+});
